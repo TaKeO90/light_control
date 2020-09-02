@@ -22,7 +22,7 @@ After=multi-user.target
 [Service]
 
 Type=idle
-ExecStart=/bin/bash -c "~/lightServer/run.sh"
+ExecStart=/bin/bash -c "~/lightwebserver/run.sh"
 
 [Install]
 
