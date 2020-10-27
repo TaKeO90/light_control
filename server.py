@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 from flask import Flask, request, jsonify
 from gpiozero import LED
+from time import strftime
+import time
 import asyncio
+import threading
 
 
 #TODO: add gpio raspberry pi to control light
+
+#TODO: time tracking for automatic light ups and light offs.
 
 app = Flask(__name__)
 
@@ -28,6 +33,7 @@ class ResponseData:
         elif msg == "" and not self.isok:
             WrongMethod = dict(ok="Wrong Method")
             return WrongMethod
+
 ####################################
 class Light:
     statuses = dict(on=True,off=False)
@@ -43,6 +49,7 @@ class Light:
             led.off()
             LIGHTSTATUS = "off"
             return True
+
 
 @app.route("/api/light",methods=["POST","GET"])
 def lightControl():
@@ -71,6 +78,54 @@ def lightControl():
         global LIGHTSTATUS
         r = ResponseData(LIGHTSTATUS,True).ReturnMsg()
         return jsonify(r)
+
+
+##
+TIMES = dict(on=None,off=None) 
+CURRENT_TIME = strftime("%I:%M:%S%p")
+##
+
+def trackTime(execTime:str):
+    if len(TIMES) == 0:
+        return False
+    else :
+        global CURRENT_TIME
+        while True:
+            while CURRENT_TIME != execTime:
+                CURRENT_TIME = strftime("%I:%M:%S%p")
+                print(CURRENT_TIME, execTime)
+                print(CURRENT_TIME == execTime)
+                time.sleep(1.2)
+            else:
+                if execTime == TIMES["on"]:
+                    if LIGHTSTATUS != "on":
+                        Light().control("on")
+                        continue
+                elif execTime == TIMES["off"]:
+                    if LIGHTSTATUS != "off":
+                        Light().control("off")
+                        continue
+                else:
+                    return False
+    
+
+@app.route("/api/track", methods=["POST","GET"])
+def setupLightTime():
+    if request.method == "POST":
+        lightTime = request.get_json(force=True)
+        ontime = lightTime["ontime"]
+        downtime = lightTime["downtime"]
+        TIMES["on"], TIMES["off"] = ontime, downtime
+        time_on_thread = threading.Thread(target=trackTime,args=(ontime,))
+        time_on_thread.start()
+        #
+        time_off_thread = threading.Thread(target=trackTime,args=(downtime,))
+        time_off_thread.start()
+        #
+        return jsonify(ResponseData("tracking time", True).ReturnMsg())
+    else:
+        return jsonify(ResponseData(LIGHTSTATUS, True).ReturnMsg())
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0",port="6000",debug=False)
