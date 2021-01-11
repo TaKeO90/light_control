@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
+
 from flask import Flask, request, jsonify
+from typing import NamedTuple
 from gpiozero import LED
+from datetime import datetime, timedelta
 from time import strftime
+import math
 import time
 import asyncio
 import threading
+import json
+import os
 
 
-#TODO: add gpio raspberry pi to control light
-
-#TODO: time tracking for automatic light ups and light offs.
+#TODO: Code Cleaning. 
 
 app = Flask(__name__)
 
@@ -34,7 +38,6 @@ class ResponseData:
             WrongMethod = dict(ok="Wrong Method")
             return WrongMethod
 
-####################################
 class Light:
     statuses = dict(on=True,off=False)
     @classmethod
@@ -80,52 +83,152 @@ def lightControl():
         return jsonify(r)
 
 
-##
-TIMES = dict(on=None,off=None) 
-CURRENT_TIME = strftime("%I:%M:%S%p")
+## Accept on and off light timestamps.
+TRACK_RUNNING = False
+MINI_DB_JSON_FILE = "time.json"
+#TODO: initialize this var when server start.
+TIME_DB_OBJ = {"light":{"on":"","off":""}}
 ##
 
-def trackTime(execTime:str):
-    if len(TIMES) == 0:
-        return False
-    else :
-        global CURRENT_TIME
-        while True:
-            while CURRENT_TIME != execTime:
-                CURRENT_TIME = strftime("%I:%M:%S%p")
-                print(CURRENT_TIME, execTime)
-                print(CURRENT_TIME == execTime)
-                time.sleep(1.2)
-            else:
-                if execTime == TIMES["on"]:
-                    if LIGHTSTATUS != "on":
-                        Light().control("on")
-                        continue
-                elif execTime == TIMES["off"]:
-                    if LIGHTSTATUS != "off":
-                        Light().control("off")
-                        continue
-                else:
-                    return False
-    
+def writeTimeToConf():
+    with open(MINI_DB_JSON_FILE, "w") as f:
+        json.dump(TIME_DB_OBJ, f)
 
-@app.route("/api/track", methods=["POST","GET"])
-def setupLightTime():
+
+@app.route("/api/light/on", methods=["POST","GET"])
+def getOnTime():
     if request.method == "POST":
-        lightTime = request.get_json(force=True)
-        ontime = lightTime["ontime"]
-        downtime = lightTime["downtime"]
-        TIMES["on"], TIMES["off"] = ontime, downtime
-        time_on_thread = threading.Thread(target=trackTime,args=(ontime,))
-        time_on_thread.start()
-        #
-        time_off_thread = threading.Thread(target=trackTime,args=(downtime,))
-        time_off_thread.start()
-        #
-        return jsonify(ResponseData("tracking time", True).ReturnMsg())
-    else:
-        return jsonify(ResponseData(LIGHTSTATUS, True).ReturnMsg())
+        global TIME_DB_OBJ
+        try:
+            on_time = request.get_json()["time"]
+        except KeyError as k:
+            return jsonify({"Invalid Parameter":k.args[0]})
+
+        TIME_DB_OBJ["light"]["on"] = on_time
+        writeTimeToConf()
+        return jsonify({"msg":"on Time Set"})
+
+    elif request.method == "GET":
+        if TIME_DB_OBJ["light"]["on"] != "":
+            return jsonify(TIME_DB_OBJ["light"]["on"])
+        return jsonify({"msg":"no on time specified"})
+
+
+@app.route("/api/light/off", methods=["POST","GET"])
+def getOffTime():
+    if request.method == "POST":
+        global TIME_DB_OBJ 
+        try:
+            off_time = request.get_json()["time"]
+        except KeyError as k:
+            return jsonify({"Invalid Parameter": k.args[0]})
+
+        TIME_DB_OBJ["light"]["off"] = off_time
+        writeTimeToConf()
+        return jsonify({"msg":"off Time Set"})
+
+    elif request.method == "GET":
+        if TIME_DB_OBJ["light"]["off"] != "":
+            return jsonify(TIME_DB_OBJ["light"]["off"])
+        return jsonify({"msg":"no off time specified"})
+        
+
+class Times(NamedTuple):
+    onTime:int
+    offTime:int
+
+
+def getTimeDiffs() -> Times:
+    # if our time object has no on or off time.
+    if TIME_DB_OBJ["light"]["on"] == "" or TIME_DB_OBJ["light"]["off"] == "":
+        #need both on and off timestamp in order to get time diffs.
+        return None
+
+    now = datetime.now()
+    fmt = "%Y-%m-%d %H:%M:%S"
+
+    on_h, on_m, on_s  = TIME_DB_OBJ["light"]["on"].split(":")
+    off_h, off_m, off_s = TIME_DB_OBJ["light"]["off"].split(":")
+
+    on_time = datetime.strptime(
+            f"{now.year}-{now.month}-{now.day} {on_h}:{on_m}:{on_s}", fmt)
+    off_time = datetime.strptime(
+            f"{now.year}-{now.month}-{now.day} {off_h}:{off_m}:{off_s}", fmt)
+
+    time_now  = datetime.strptime(
+            f"{now.year}-{now.month}-{now.day} {now.hour}:{now.minute}:{now.second}", fmt)
+
+    deltaONtime = (on_time - time_now).total_seconds()
+    deltaOFFtime = (off_time - time_now).total_seconds()
+
+    if time_now > on_time :
+        on_time = on_time + timedelta(hours=24)
+        deltaONtime = (on_time - time_now).total_seconds()
+
+    if time_now > off_time:
+        off_time = off_time + timedelta(hours=24)
+        deltaOFFtime = (off_time - time_now).total_seconds()
+
+    return Times(math.floor(deltaONtime), math.floor(deltaOFFtime))
+
+
+
+### need to set for each thread a separated function
+deltaOntime = 0
+deltaOfftime= 0
+###
+
+def turnOn():
+    global deltaOntime
+    deltaOntime = 0
+    diffs = getTimeDiffs()
+    deltaOntime = diffs.onTime
+    Light().control("on")
+    runOnTimeThread()
+
+
+def turnOff():
+    global deltaOfftime
+    deltaOfftime = 0
+    diffs = getTimeDiffs()
+    deltaOfftime = diffs.offTime
+    Light().control("off")
+    runOffTimeThread()
+
+def runOnTimeThread(): 
+    if deltaOntime != 0:
+        threading.Timer(deltaOntime, turnOn).start()
+
+def runOffTimeThread():
+    if deltaOfftime != 0:
+        threading.Timer(deltaOfftime, turnOff).start()
+
+
+@app.route("/api/track", methods=["GET"])
+def trackTime():
+    diffs = getTimeDiffs()
+    if diffs is not None:
+        global deltaOntime
+        global deltaOfftime
+
+        deltaOntime = diffs.onTime
+        deltaOfftime = diffs.offTime
+
+        runOnTimeThread()
+        runOffTimeThread()
+
+        return "Tracking..."
+
+    return "Failed to Track both on and off Times..."
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0",port="6000",debug=False)
+    # When server starts we deserialize our json into TIME_DB_OBJ.
+    if len([f for f in os.listdir() if f == MINI_DB_JSON_FILE]) != 0:
+        with open(MINI_DB_JSON_FILE, "r") as f:
+            TIME_DB_OBJ = json.load(f)
+        print("[+] times initialized", TIME_DB_OBJ)
+        trackTime()
+
+    app.run(host="0.0.0.0",port="6040",debug=False)
+
