@@ -2,8 +2,9 @@
 
 
 ## TODO :
-- [ ] add timer to turn on or off the light
-- [ ] add schedule for turning on or off the light
+- [X] add timer to turn on or off the light
+- [X] add schedule for turning on or off the light
+- [ ] ...
 
 ## RUN AS A SERVICE
 - edit this file down bellow.
