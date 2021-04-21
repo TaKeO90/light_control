@@ -1,7 +1,9 @@
 import threading
 
 from   fastapi  import FastAPI, HTTPException
+from   gpiozero import LED
 import uvicorn
+
 
 from api_models import models
 import parseConfig
@@ -9,6 +11,8 @@ import timer
 
 
 app = FastAPI()
+
+led = LED(17)
 
 @app.get("/on", status_code=200)
 async def turn_on():
@@ -20,19 +24,24 @@ async def turn_off():
     light_OFF()
     return {"ok": True}
 
-# TODO: Update config file when stting new time.
 @app.post("/set", status_code=200)
 async def set_time(req: models.LightSetter):
+    global CONFIG
     if req.mode == models.Mode.On:
         TIMER_ONE.stop_timer()
         if req.time != "":
             TIMER_ONE.t = req.time
+            CONFIG = CONFIG._replace(start_time=req.time)
+            print("DEBUG", CONFIG)
+            CONFIG.write_config_file("./config")
             return {"ok": True}
         raise HTTPException(status_code=400)
     elif req.mode == models.Mode.Off:
         TIMER_TWO.stop_timer()
         if req.time != "":
             TIMER_TWO.t = req.time
+            CONFIG._replace(start_time=req.time)
+            CONFIG.write_config_file("./config")
             return {"ok": True}
         raise HTTPException(status_code=400)
     
@@ -41,12 +50,14 @@ async def set_time(req: models.LightSetter):
 
 TIMER_ONE, TIMER_TWO = None, None
 
+CONFIG = None
+
 def light_ON():
-    #TODO: ...
+    led.on()
     print("LIGHT ON")
 
 def light_OFF():
-    #TODO: ...
+    led.off()
     print("LIGHT OFF")
 
 
@@ -65,12 +76,14 @@ def light_off_timer(stop_time:str):
     th.start()
 
 def main():
-    cfg = parseConfig.load_config("./config")
+    global CONFIG
+    CONFIG = parseConfig.load_config("./config")
 
-    print("DEBUG", cfg.start_time, cfg.stop_time)
+    print("DEBUG", CONFIG.start_time, CONFIG.stop_time)
 
-    light_on_timer(cfg.start_time)
-    light_off_timer(cfg.stop_time)
+    light_on_timer(CONFIG.start_time)
+    light_off_timer(CONFIG.stop_time)
+
 
 
 if __name__ == "__main__":
