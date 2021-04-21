@@ -4,6 +4,13 @@ class Config(NamedTuple):
     start_time: str
     stop_time: str
 
+    def write_config_file(self, filename:str):
+        data = f"""start_time: {self.start_time}
+stop_time: {self.stop_time}
+"""
+        with open(filename, "w") as f:
+            f.writelines(data)
+
 
 def load_config(filename:str):
     with open(filename,"r") as f:
